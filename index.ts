@@ -7,13 +7,16 @@ async function main() {
     const database = new Database();
     await database.initialize();
 
-    const invoice = new Invoice("1");
-    invoice.initialize(100, "pending");
-    invoice.save();
-
     const customer = new Customer("1");
     customer.initialize("John Doe");
     customer.save();
+
+    const invoice = new Invoice("1");
+    invoice.initialize(100, "pending");
+    invoice.customer = customer;
+    invoice.save();
+
+    console.log(invoice.customer);
 
     // await database.commit();
     // await database.rollback();
@@ -21,8 +24,12 @@ async function main() {
 
     const storeManager = new StoreManager();
     await storeManager.initialize();
-    console.log(storeManager.getStore("Invoice"));
-    console.log(storeManager.getStore("Customer"));
+    // console.log(storeManager.getStore("Invoice"));
+    // console.log(storeManager.getStore("Customer"));
+
+    // Test lazy loading
+    const invoices = await invoice.customer.invoices.load();
+    console.log(invoices);
 }
 
 main().catch(console.error);

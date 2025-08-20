@@ -1,15 +1,23 @@
 import { ClientModel, Property } from "./decorator";
 import { Model } from "./model";
 import { UpdateOperation } from "./operation";
+import { BackReference } from "./back-reference";
+import { LazyReferenceCollection } from "./lazy-reference-collection";
+import { Invoice } from "./invoice-model";
+import { makeObservable } from "mobx";
 
 @ClientModel('Customer')
-class Customer extends Model {
-    @Property({ type: 'string' })
+export class Customer extends Model {
+    @Property({ type: 'property' })
     name!: string;
+
+    @BackReference()
+    invoices!: LazyReferenceCollection<Invoice>;
 
     constructor(id: string) {
         super(id);
         this.name = '';
+        makeObservable(this);
     }
 
     initialize(name: string) {
@@ -36,5 +44,3 @@ class Customer extends Model {
         };
     }
 }
-
-export { Customer };

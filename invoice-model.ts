@@ -1,19 +1,26 @@
 import { ClientModel, Property } from "./decorator";
 import { Model } from "./model";
 import { UpdateOperation } from "./operation";
+import { Reference } from "./reference";
+import { Customer } from "./customer-model";
+import { makeObservable, observable } from "mobx";
 
 @ClientModel('Invoice')
 class Invoice extends Model {
-    @Property({ type: 'number' })
+    @Property({ type: 'property' })
     amount!: number;
 
-    @Property({ type: 'string' })
+    @Property({ type: 'property' })
     status!: string;
+
+    @observable @Reference(() => Customer, 'customer')
+    customer!: Customer;
 
     constructor(id: string) {
         super(id);
         this.amount = 0;
         this.status = 'pending';
+        makeObservable(this);
     }
 
     initialize(amount: number, status: string) {
@@ -36,11 +43,12 @@ class Invoice extends Model {
     }
 
     protected getChanges(): Record<string, any> {
+        // TODO: Only return changes that have actually changed
         return {
             amount: this.amount,
-            status: this.status
+            status: this.status,
+            customerId: this.customer.id
         }
     }
 }
-
 export { Invoice };

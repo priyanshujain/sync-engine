@@ -49,7 +49,7 @@ class FullObjectStore extends ObjectStore {
 }
 
 class PartialObjectStore extends ObjectStore {
-    private partialDbName: string;
+    private partialStoreName: string;
 
     constructor(model: ModelMetadata) {
         super(model);
@@ -57,7 +57,7 @@ class PartialObjectStore extends ObjectStore {
 
     async initialize() {
         this.initializeStore();
-        this.storeName = `${this.storeName}_partial`;
+        this.partialStoreName = `${this.storeName}_partial`;
         this.isInitialized = true;
     }
 
@@ -70,7 +70,7 @@ class PartialObjectStore extends ObjectStore {
             });
 
             // Create partial index store
-            db.createObjectStore('partial_indexes', {
+            db.createObjectStore(this.partialStoreName, {
                 keyPath: 'indexKey'
             });
         }
