@@ -49,7 +49,7 @@ class FullObjectStore extends ObjectStore {
 }
 
 class PartialObjectStore extends ObjectStore {
-    private partialStoreName: string;
+    private partialStoreName: string = '';
 
     constructor(model: ModelMetadata) {
         super(model);

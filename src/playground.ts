@@ -2,6 +2,7 @@ import { observable, runInAction } from 'mobx'; // Removed makeObservable
 
 class Model {
   @observable id: string = '';
+  [key: string]: any;
   constructor(id?: string) {
     if (id) this.id = id;
     // No makeObservable here

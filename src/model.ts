@@ -6,6 +6,7 @@ export abstract class Model {
   id: string;
   operationQueue: OperationQueue;
   _version = 0;
+  [key: string]: any;
 
   static loadStrategy: 'full' | 'partial' = 'full';
   
