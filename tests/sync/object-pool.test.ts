@@ -1,35 +1,35 @@
 import { ObjectPool } from '../../src/sync/object-pool';
-import { Model } from '../../src/model';
+import { BaseModel } from '../../src/models/base-model';
 
-class TestModel extends Model {
+class TestModel extends BaseModel {
   name: string = '';
   
   constructor(id: string) {
-    super(id);
+    super(id, { autoSave: false });
   }
 
   protected getChanges(): Record<string, any> {
     return { name: this.name };
   }
 
-  save(): void {
-    this.markChanged();
+  async save(): Promise<void> {
+    this.markDirty();
   }
 }
 
-class AnotherTestModel extends Model {
+class AnotherTestModel extends BaseModel {
   value: number = 0;
   
   constructor(id: string) {
-    super(id);
+    super(id, { autoSave: false });
   }
 
   protected getChanges(): Record<string, any> {
     return { value: this.value };
   }
 
-  save(): void {
-    this.markChanged();
+  async save(): Promise<void> {
+    this.markDirty();
   }
 }
 

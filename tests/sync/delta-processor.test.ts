@@ -2,23 +2,23 @@ import { DeltaProcessor } from '../../src/sync/delta-processor';
 import { ObjectPool } from '../../src/sync/object-pool';
 import { SyncIdManager } from '../../src/sync/sync-id-manager';
 import { DeltaPacket, DeltaAction, DeltaBatch } from '../../src/sync/delta-packet';
-import { Model } from '../../src/model';
+import { BaseModel } from '../../src/models/base-model';
 import { ModelRegistry } from '../../src/model-registry';
 
-class TestModel extends Model {
+class TestModel extends BaseModel {
   name: string = '';
   archived: boolean = false;
   
   constructor(id: string) {
-    super(id);
+    super(id, { autoSave: false });
   }
 
   protected getChanges(): Record<string, any> {
     return { name: this.name };
   }
 
-  save(): void {
-    this.markChanged();
+  async save(): Promise<void> {
+    this.markDirty();
   }
 }
 
