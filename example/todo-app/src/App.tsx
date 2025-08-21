@@ -25,7 +25,7 @@ const App = observer(() => {
     updateTodos()
     
     // Set up periodic updates (simple polling since we don't have proper event system)
-    const interval = setInterval(updateTodos, 1000)
+    const interval = setInterval(updateTodos, 500) // Faster updates for demo
     
     return () => {
       clearInterval(interval)

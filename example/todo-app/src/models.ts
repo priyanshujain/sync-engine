@@ -10,7 +10,6 @@ export class Todo extends Model {
 
   constructor(id?: string, options?: ModelOptions & { text?: string }) {
     super(id || uuidv4(), options)
-    this.text = options?.text || ''
     
     // Make properties observable for React updates
     makeObservable(this, {
@@ -20,6 +19,16 @@ export class Todo extends Model {
       setText: action,
       toggle: action,
     })
+    
+    // Capture empty initial state first
+    this.markClean() // Capture empty state as previous state
+    
+    // Now set the text (this creates changes vs the empty previous state)
+    this.text = options?.text || ''
+    // Make it dirty for sync (this should now detect changes)
+    if (options?.text) {
+      this.markDirty()
+    }
   }
 
   setText(text: string): void {
@@ -40,6 +49,7 @@ export class Todo extends Model {
       createdAt: this.createdAt,
     }
   }
+
 
   static fromJSON<T extends Model>(
     this: new (id: string) => T,
