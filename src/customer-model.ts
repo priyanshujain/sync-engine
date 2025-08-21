@@ -1,21 +1,20 @@
 import { ClientModel, Property } from "./decorator";
-import { Model } from "./model";
-import { UpdateOperation } from "./operation";
+import { BaseModel, ModelOptions } from "./models/base-model";
 import { BackReference } from "./back-reference";
 import { LazyReferenceCollection } from "./lazy-reference-collection";
 import { Invoice } from "./invoice-model";
 import { makeObservable } from "mobx";
 
 @ClientModel('Customer')
-export class Customer extends Model {
+export class Customer extends BaseModel {
     @Property({ type: 'property' })
     name!: string;
 
     @BackReference()
     invoices!: LazyReferenceCollection<Invoice>;
 
-    constructor(id: string) {
-        super(id);
+    constructor(id: string, options?: ModelOptions) {
+        super(id, options);
         this.name = '';
         makeObservable(this);
     }
@@ -25,21 +24,16 @@ export class Customer extends Model {
         return this;
     }
 
-    save() {
-        const changes = this.getChanges();
-        if (Object.keys(changes).length > 0) {
-            const transaction = new UpdateOperation(
-                this.id,
-                'Customer',
-                changes
-            );
-            this.markChanged();
-            this.operationQueue.enqueue(transaction);
-        }
+    async save(): Promise<void> {
+        // Mark as dirty to trigger save in base class
+        this.markDirty();
+        // Call parent save which handles transaction creation
+        return super.save();
     }
 
-    protected getChanges(): Record<string, any> {
+    toJSON(): Record<string, any> {
         return {
+            id: this.id,
             name: this.name
         };
     }

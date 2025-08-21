@@ -31,7 +31,7 @@ export function Reference(targetModel: () => typeof Model, backRefName: string) 
               targetModel().name, 
               previousId
             );
-            previousModel?.[backRefName]?.remove(this);
+            (previousModel as any)?.[backRefName]?.remove(this);
           }
           
           if (id) {
@@ -39,7 +39,7 @@ export function Reference(targetModel: () => typeof Model, backRefName: string) 
               targetModel().name, 
               id
             );
-            newModel?.[backRefName]?.add(this);
+            (newModel as any)?.[backRefName]?.add(this);
           }
         });
       }

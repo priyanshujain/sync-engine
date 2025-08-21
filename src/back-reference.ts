@@ -13,8 +13,8 @@ export function BackReference() {
   
       // Initialize collection
       const initializeCollection = (instance: Model) => {
-        if (!instance[propertyKey]) {
-          instance[propertyKey] = new LazyReferenceCollection(
+        if (!(instance as any)[propertyKey]) {
+          (instance as any)[propertyKey] = new LazyReferenceCollection(
             instance.constructor as typeof Model,
             instance,
             propertyKey

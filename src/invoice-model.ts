@@ -1,12 +1,11 @@
 import { ClientModel, Property } from "./decorator";
-import { Model } from "./model";
-import { UpdateOperation } from "./operation";
+import { BaseModel, ModelOptions } from "./models/base-model";
 import { Reference } from "./reference";
 import { Customer } from "./customer-model";
 import { makeObservable, observable } from "mobx";
 
 @ClientModel('Invoice')
-class Invoice extends Model {
+class Invoice extends BaseModel {
     @Property({ type: 'property' })
     amount!: number;
 
@@ -16,8 +15,8 @@ class Invoice extends Model {
     @observable @Reference(() => Customer, 'customer')
     customer!: Customer;
 
-    constructor(id: string) {
-        super(id);
+    constructor(id: string, options?: ModelOptions) {
+        super(id, options);
         this.amount = 0;
         this.status = 'pending';
         makeObservable(this);
@@ -29,26 +28,20 @@ class Invoice extends Model {
         return this;
     }
 
-    save() {
-        const changes = this.getChanges();
-        if (Object.keys(changes).length > 0) {
-            const transaction = new UpdateOperation(
-                this.id,
-                'Invoice',
-                changes
-            );
-            this.markChanged();
-            this.operationQueue.enqueue(transaction);
-        }
+    async save(): Promise<void> {
+        // Mark as dirty to trigger save in base class
+        this.markDirty();
+        // Call parent save which handles transaction creation
+        return super.save();
     }
 
-    protected getChanges(): Record<string, any> {
-        // TODO: Only return changes that have actually changed
+    toJSON(): Record<string, any> {
         return {
+            id: this.id,
             amount: this.amount,
             status: this.status,
-            customerId: this.customer.id
-        }
+            customerId: this.customer?.id
+        };
     }
 }
 export { Invoice };

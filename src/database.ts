@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { Operation } from './operation';
+import { Transaction } from './sync/transaction';
 
 export class Database {
     private db!: IDBDatabase;
@@ -24,7 +24,7 @@ export class Database {
       });
     }
   
-    async saveOperation(transaction: Operation) {
+    async saveOperation(transaction: Transaction) {
       const tx = this.db.transaction('transactions', 'readwrite');
       tx.objectStore('transactions').add(transaction);
       return tx.oncomplete;
