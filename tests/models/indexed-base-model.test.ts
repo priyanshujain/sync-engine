@@ -135,6 +135,9 @@ describe('IndexedBaseModel', () => {
     // Clear the static store reference first to prevent new operations
     IndexedBaseModel.setStore(undefined as any);
     
+    // Dispose of any resources created during testing
+    // This ensures proper cleanup of timers and other resources
+    
     // Wait a bit for any pending operations to complete
     await new Promise(resolve => setTimeout(resolve, 10));
     

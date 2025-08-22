@@ -1,6 +1,7 @@
 import { makeObservable, observable, action } from 'mobx';
 import { ModelRegistry } from '../model-registry';
 import { IndexedDBStore } from '../storage/indexed-db-store';
+import { ResourceManager } from '../utils/resource-manager';
 
 export interface ModelOptions {
   autoSave?: boolean;
@@ -28,6 +29,7 @@ export abstract class IndexedBaseModel {
   protected static syncEngine?: any; // HashSyncEngine - avoiding circular imports
   
   protected options: ModelOptions;
+  protected resourceManager?: ResourceManager;
 
   constructor(id: string, options: ModelOptions = {}) {
     this.id = id;
@@ -202,8 +204,12 @@ export abstract class IndexedBaseModel {
       
       // Update sync engine count if available (schedule async to avoid MobX cycles)
       if (IndexedBaseModel.syncEngine && typeof IndexedBaseModel.syncEngine.updatePendingSyncCount === 'function') {
-        // Use setTimeout to break potential MobX reaction cycles, with unref to prevent process hanging
-        const timer = setTimeout(() => {
+        // Use resource manager for proper timer cleanup
+        if (!this.resourceManager) {
+          this.resourceManager = new ResourceManager();
+        }
+        
+        this.resourceManager.setTimeout(() => {
           // Check if store is still initialized before updating
           if (IndexedBaseModel.store && IndexedBaseModel.syncEngine) {
             IndexedBaseModel.syncEngine.updatePendingSyncCount().catch(() => {
@@ -211,10 +217,6 @@ export abstract class IndexedBaseModel {
             });
           }
         }, 0);
-        // Prevent timer from keeping process alive
-        if (timer && typeof timer.unref === 'function') {
-          timer.unref();
-        }
       }
       
       this.markClean();
@@ -384,5 +386,15 @@ export abstract class IndexedBaseModel {
     }
 
     await IndexedBaseModel.store.clear(this.name);
+  }
+
+  /**
+   * Dispose of resources held by this model instance
+   */
+  async dispose(): Promise<void> {
+    if (this.resourceManager) {
+      await this.resourceManager.dispose();
+      this.resourceManager = undefined;
+    }
   }
 }

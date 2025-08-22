@@ -99,7 +99,9 @@ describe('HashSyncEngine', () => {
   });
 
   afterEach(async () => {
-    syncEngine.disconnect();
+    if (syncEngine) {
+      await syncEngine.dispose(); // Proper resource cleanup
+    }
     await store.deleteDatabase();
   });
 
@@ -446,7 +448,9 @@ describe('HashSyncEngine Edge Cases', () => {
   });
 
   afterEach(async () => {
-    syncEngine.disconnect();
+    if (syncEngine) {
+      await syncEngine.dispose(); // Proper resource cleanup
+    }
     await store.deleteDatabase();
   });
 

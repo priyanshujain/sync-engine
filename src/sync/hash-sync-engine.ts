@@ -3,6 +3,7 @@ import { IndexedBaseModel } from '../models/indexed-base-model';
 import { ModelRegistry, ModelMetadata } from '../model-registry';
 import { SchemaHasher } from '../hash';
 import { SyncRecordValidator } from './sync-record-validator';
+import { ResourceManager, ManagedWebSocket } from '../utils/resource-manager';
 import { makeObservable, observable, action, computed } from 'mobx';
 
 /**
@@ -86,9 +87,11 @@ export class HashSyncEngine {
   private store: IndexedDBStore;
   private config: Required<HashSyncConfig>;
   private websocket?: WebSocket;
-  private syncTimer?: NodeJS.Timeout;
-  private heartbeatTimer?: NodeJS.Timeout;
-  private reconnectTimer?: NodeJS.Timeout;
+  private resourceManager: ResourceManager;
+  private syncTimer?: NodeJS.Timeout | number;
+  private heartbeatTimer?: NodeJS.Timeout | number;
+  private reconnectTimer?: NodeJS.Timeout | number;
+  private eventCleanup?: () => void;
   
   @observable status: HashSyncStatus = HashSyncStatus.DISCONNECTED;
   @observable lastError?: Error;
@@ -100,6 +103,7 @@ export class HashSyncEngine {
 
   constructor(store: IndexedDBStore, config: HashSyncConfig = {}) {
     this.store = store;
+    this.resourceManager = new ResourceManager();
     this.config = {
       serverUrl: config.serverUrl || 'ws://localhost:8080/sync',
       clientId: config.clientId || this.generateClientId(),
@@ -261,14 +265,14 @@ export class HashSyncEngine {
 
   private async establishWebSocketConnection(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeoutHandle = this.resourceManager.setTimeout(() => {
         reject(new Error('WebSocket connection timeout'));
       }, 10000);
 
       this.websocket = new WebSocket(this.config.serverUrl);
 
       this.websocket.onopen = () => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.log('Hash sync WebSocket connected');
         resolve();
       };
@@ -283,13 +287,13 @@ export class HashSyncEngine {
       };
 
       this.websocket.onclose = () => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.log('Hash sync WebSocket disconnected');
         this.handleDisconnection();
       };
 
       this.websocket.onerror = (error) => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.error('Hash sync WebSocket error:', error);
         reject(new Error('WebSocket connection failed'));
       };
@@ -536,7 +540,12 @@ export class HashSyncEngine {
   }
 
   private scheduleReconnect(): void {
-    this.reconnectTimer = setTimeout(() => {
+    if (this.reconnectTimer) {
+      return; // Already scheduled
+    }
+    
+    this.reconnectTimer = this.resourceManager.setTimeout(() => {
+      this.reconnectTimer = undefined;
       if (this.status === HashSyncStatus.DISCONNECTED && this.isOnline) {
         this.connect().catch(console.error);
       }
@@ -544,42 +553,40 @@ export class HashSyncEngine {
   }
 
   private startPeriodicSync(): void {
-    this.syncTimer = setInterval(() => {
+    if (this.syncTimer) {
+      return; // Already running
+    }
+    
+    this.syncTimer = this.resourceManager.setInterval(() => {
       if (this.status === HashSyncStatus.CONNECTED) {
         this.sync().catch(console.error);
       }
     }, this.config.syncIntervalMs);
-    
-    // Prevent timer from keeping process alive in tests
-    if (this.syncTimer && typeof this.syncTimer.unref === 'function') {
-      this.syncTimer.unref();
-    }
   }
 
   private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(() => {
+    if (this.heartbeatTimer) {
+      return; // Already running
+    }
+    
+    this.heartbeatTimer = this.resourceManager.setInterval(() => {
       this.sendMessage({ type: 'heartbeat', timestamp: Date.now() });
     }, this.config.heartbeatIntervalMs);
-    
-    // Prevent timer from keeping process alive in tests
-    if (this.heartbeatTimer && typeof this.heartbeatTimer.unref === 'function') {
-      this.heartbeatTimer.unref();
-    }
   }
 
   private clearTimers(): void {
     if (this.syncTimer) {
-      clearInterval(this.syncTimer);
+      this.resourceManager.clearTimer(this.syncTimer);
       this.syncTimer = undefined;
     }
     
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      this.resourceManager.clearTimer(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
     
     if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+      this.resourceManager.clearTimer(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
   }
@@ -597,8 +604,11 @@ export class HashSyncEngine {
       this.setStatus(HashSyncStatus.DISCONNECTED);
     };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    // Use resource manager for automatic cleanup
+    if (typeof window !== 'undefined') {
+      this.resourceManager.addEventListener(window, 'online', handleOnline);
+      this.resourceManager.addEventListener(window, 'offline', handleOffline);
+    }
   }
 
   private async loadSyncState(): Promise<void> {
@@ -651,5 +661,19 @@ export class HashSyncEngine {
 
   private generateDeltaId(): string {
     return `delta_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * Dispose of all resources held by the sync engine
+   */
+  async dispose(): Promise<void> {
+    // Disconnect from server
+    this.disconnect();
+    
+    // Clean up all managed resources
+    await this.resourceManager.dispose();
+    
+    // Clear references
+    this.websocket = undefined;
   }
 }
