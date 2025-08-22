@@ -1,38 +1,63 @@
 import React, { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-// TODO: Update TODO app to use new HashSyncEngine API
-// import { HashSyncEngine, HashSyncStatus } from '../../../src/sync/hash-sync-engine'
-// import { IndexedDBStore } from '../../../src/storage/indexed-db-store'
+import { HashSyncEngine, HashSyncStatus } from '../../../src/sync/hash-sync-engine'
+import { IndexedDBStore } from '../../../src/storage/indexed-db-store'
 import { Todo } from './models'
 
-// TODO: Initialize the new hash-based sync client after updating API usage
-// const store = new IndexedDBStore()
-// const syncClient = new HashSyncEngine(store, {
-//   serverUrl: 'ws://localhost:8080', // Mock server URL
-// })
+const store = new IndexedDBStore()
+const syncClient = new HashSyncEngine(store, {
+  serverUrl: 'ws://localhost:8080',
+  clientId: `todo-client-${Date.now()}`,
+})
+
+// Set up the models with the store and sync engine
+Todo.setStore(store)
+Todo.setSyncEngine(syncClient)
 
 const App = observer(() => {
   const [newTodoText, setNewTodoText] = useState('')
   const [todos, setTodos] = useState<Todo[]>([])
 
   useEffect(() => {
-    // TODO: Try to connect to sync server (will fail gracefully if no server)
-    // syncClient.connect().catch(console.warn)
+    const initializeSync = async () => {
+      try {
+        // Initialize store first with Todo model metadata
+        await store.initialize([{
+          name: 'Todo',
+          loadStrategy: 'full',
+          schemaVersion: 1,
+          properties: new Map()
+        }])
+        
+        // Initialize sync engine
+        await syncClient.initialize()
+        
+        // Try to connect to sync server (will fail gracefully if no server)
+        syncClient.connect().catch(console.warn)
+        
+        // Load existing todos from storage
+        const existingTodos = await Todo.loadAll()
+        setTodos(existingTodos.filter((todo: Todo) => !todo._isDeleted))
+      } catch (error) {
+        console.warn('Failed to initialize sync client:', error)
+      }
+    }
     
-    // TODO: Update todos list when sync client state changes
-    // const updateTodos = () => {
-    //   const allTodos = syncClient.getModelsByType<Todo>('Todo')
-    //   setTodos(allTodos.filter(todo => !todo._isDeleted))
-    // }
+    initializeSync()
     
-    // updateTodos()
-    
-    // TODO: Set up periodic updates (simple polling since we don't have proper event system)
-    // const interval = setInterval(updateTodos, 500) // Faster updates for demo
+    // Set up periodic updates to reflect sync changes
+    const interval = setInterval(async () => {
+      try {
+        const allTodos = await Todo.loadAll()
+        setTodos(allTodos.filter((todo: Todo) => !todo._isDeleted))
+      } catch (error) {
+        console.warn('Failed to update todos:', error)
+      }
+    }, 1000)
     
     return () => {
-      // clearInterval(interval)
-      // syncClient.disconnect()
+      clearInterval(interval)
+      syncClient.disconnect()
     }
   }, [])
 
@@ -43,7 +68,6 @@ const App = observer(() => {
     setTodos(prev => [...prev, todo])
     setNewTodoText('')
     
-    // Save will automatically sync via the sync client
     await todo.save()
   }
 
@@ -59,19 +83,19 @@ const App = observer(() => {
 
   const getStatusClass = () => {
     switch (syncClient.status) {
-      case SyncStatus.CONNECTED: return 'connected'
-      case SyncStatus.CONNECTING: return 'connecting'
-      case SyncStatus.SYNCING: return 'connecting'
+      case HashSyncStatus.CONNECTED: return 'connected'
+      case HashSyncStatus.CONNECTING: return 'connecting'
+      case HashSyncStatus.SYNCING: return 'connecting'
       default: return 'disconnected'
     }
   }
 
   const getStatusText = () => {
     switch (syncClient.status) {
-      case SyncStatus.CONNECTED: return 'Connected to sync server'
-      case SyncStatus.CONNECTING: return 'Connecting to sync server...'
-      case SyncStatus.SYNCING: return 'Syncing...'
-      case SyncStatus.ERROR: return `Sync error: ${syncClient.lastError?.message || 'Unknown error'}`
+      case HashSyncStatus.CONNECTED: return 'Connected to sync server'
+      case HashSyncStatus.CONNECTING: return 'Connecting to sync server...'
+      case HashSyncStatus.SYNCING: return 'Syncing...'
+      case HashSyncStatus.ERROR: return `Sync error: ${syncClient.lastError?.message || 'Unknown error'}`
       default: return 'Offline mode (changes saved locally)'
     }
   }
@@ -82,7 +106,11 @@ const App = observer(() => {
     }
   }
 
-  const stats = syncClient.getStats()
+  const stats = {
+    objectPoolSize: todos.length,
+    pendingTransactions: syncClient.pendingSyncRecords,
+    completedTransactions: 0
+  }
 
   return (
     <div className="container">

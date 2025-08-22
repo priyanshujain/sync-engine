@@ -1,52 +1,7 @@
 import WebSocket, { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 
-// Types from the sync engine
-enum TransactionType {
-  CREATE = 'CREATE',
-  UPDATE = 'UPDATE', 
-  DELETE = 'DELETE',
-  ARCHIVE = 'ARCHIVE',
-  UNARCHIVE = 'UNARCHIVE'
-}
-
-enum DeltaAction {
-  INSERT = 'I',
-  UPDATE = 'U',
-  ARCHIVE = 'A',
-  DELETE = 'D',
-  CREATE = 'C',
-  GAP = 'G',
-  SYNC = 'S',
-  VALIDATION = 'V'
-}
-
-interface Transaction {
-  id: string;
-  type: TransactionType;
-  modelType: string;
-  modelId: string;
-  timestamp: number;
-  data: any;
-  previousData?: any;
-}
-
-interface TransactionBatch {
-  id: string;
-  transactions: Transaction[];
-  timestamp: number;
-}
-
-interface DeltaPacket {
-  id: number;
-  modelName: string;
-  modelId: string;
-  action: DeltaAction;
-  data?: any;
-  previousData?: any;
-  timestamp?: number;
-  userId?: string;
-}
+// Types for HashSyncEngine protocol
 
 interface ClientConnection {
   ws: WebSocket;
@@ -89,11 +44,7 @@ class MockSyncServer {
       this.clients.set(clientId, client);
       console.log(`✅ Client connected: ${clientId} (${this.clients.size} total clients)`);
 
-      // Send initial sync status
-      this.sendSyncStatus(client);
-
-      // Send existing models to the new client
-      this.sendExistingModels(client);
+      // Client will request sync state via sync_state_request message
 
       ws.on('message', async (data: WebSocket.RawData) => {
         try {
@@ -118,7 +69,7 @@ class MockSyncServer {
 
     this.wss.on('listening', () => {
       console.log(`🎯 Mock Sync Server ready on ws://localhost:${this.port}`);
-      console.log('📝 Ready to handle transaction batches and broadcast deltas');
+      console.log('📝 Ready to handle HashSyncEngine protocol messages');
     });
   }
 
@@ -126,199 +77,118 @@ class MockSyncServer {
     console.log(`📨 Message from ${client.id}:`, message.type);
 
     switch (message.type) {
-      case 'transaction_batch':
-        await this.handleTransactionBatch(client, message.batch);
+      // HashSyncEngine protocol
+      case 'sync_delta':
+        await this.handleSyncDelta(client, message);
         break;
-      case 'sync_status_request':
-        this.sendSyncStatus(client);
+      case 'version_check':
+        this.handleVersionCheck(client, message);
         break;
-      case 'ping':
-        this.send(client, { type: 'pong', timestamp: Date.now() });
+      case 'sync_state_request':
+        console.log(`📋 Sync state request from ${client.id}:`, JSON.stringify(message, null, 2));
+        this.sendSyncState(client, message);
         break;
+      case 'heartbeat':
+        // Client heartbeat - no response needed
+        break;
+        
       default:
         console.warn(`⚠️ Unknown message type: ${message.type}`);
     }
   }
 
-  private async handleTransactionBatch(client: ClientConnection, batch: TransactionBatch): Promise<void> {
-    console.log(`🔄 Processing batch ${batch.id} with ${batch.transactions.length} transactions`);
+  // HashSyncEngine protocol handlers
+  private async handleSyncDelta(client: ClientConnection, message: any): Promise<void> {
+    const delta = message.delta;
+    console.log(`🔄 Processing sync delta from ${client.id}:`, delta?.records?.length || 0, 'records');
     
-    const deltaPackets: DeltaPacket[] = [];
-    const processedTransactions: string[] = [];
+    if (!delta || !delta.records || !Array.isArray(delta.records)) {
+      console.warn('⚠️ Invalid sync delta format - no delta.records array');
+      return;
+    }
 
-    for (const transaction of batch.transactions) {
+    const processedRecords: any[] = [];
+    
+    for (const record of delta.records) {
       try {
-        const delta = await this.processTransaction(transaction);
-        if (delta) {
-          deltaPackets.push(delta);
-          processedTransactions.push(transaction.id);
+        const result = await this.processSyncRecord(record);
+        if (result) {
+          processedRecords.push(result);
         }
       } catch (error) {
-        console.error(`❌ Error processing transaction ${transaction.id}:`, error);
-        this.sendTransactionError(client, transaction.id, error.message);
+        console.error(`❌ Error processing sync record:`, error);
       }
     }
 
-    // Send acknowledgments for successfully processed transactions
-    for (const transactionId of processedTransactions) {
-      this.sendTransactionAck(client, transactionId, this.syncIdCounter);
-    }
+    // Send acknowledgment back to client with the original sync record IDs
+    const processedRecordIds = processedRecords.map(record => record.originalSyncRecordId);
+    this.send(client, {
+      type: 'sync_ack',
+      deltaId: delta.id,
+      recordIds: processedRecordIds,
+      timestamp: Date.now()
+    });
 
-    // Broadcast delta packets to all clients
-    if (deltaPackets.length > 0) {
-      this.broadcastDeltas(deltaPackets, client.id);
+    // Broadcast changes to other clients
+    if (processedRecords.length > 0) {
+      this.broadcastSyncRecords(processedRecords, client.id);
     }
   }
 
-  private async processTransaction(transaction: Transaction): Promise<DeltaPacket | null> {
-    const modelKey = `${transaction.modelType}:${transaction.modelId}`;
+  private async processSyncRecord(record: any): Promise<any> {
+    const modelKey = `${record.modelName}:${record.modelId}`;
     const syncId = ++this.syncIdCounter;
     
-    console.log(`⚡ Processing ${transaction.type} for ${transaction.modelType}:${transaction.modelId}`);
+    console.log(`⚡ Processing ${record.operation} for ${record.modelName}:${record.modelId}`);
 
-    let delta: DeltaPacket | null = null;
-
-    switch (transaction.type) {
-      case TransactionType.CREATE:
+    switch (record.operation) {
+      case 'create':
         if (!this.models.has(modelKey)) {
           this.models.set(modelKey, {
-            id: transaction.modelId,
-            modelType: transaction.modelType,
-            data: transaction.data,
+            id: record.modelId,
+            modelType: record.modelName,
+            data: record.data,
             lastModified: Date.now(),
             syncId
           });
-          
-          delta = {
-            id: syncId,
-            modelName: transaction.modelType,
-            modelId: transaction.modelId,
-            action: DeltaAction.CREATE,
-            data: transaction.data,
-            timestamp: Date.now()
-          };
+          return { ...record, syncId, processed: true, originalSyncRecordId: record.id };
         }
         break;
 
-      case TransactionType.UPDATE:
+      case 'update':
         const existingModel = this.models.get(modelKey);
         if (existingModel) {
-          // Simple last-write-wins conflict resolution
-          const previousData = { ...existingModel.data };
-          existingModel.data = { ...existingModel.data, ...transaction.data };
+          existingModel.data = { ...existingModel.data, ...record.data };
           existingModel.lastModified = Date.now();
           existingModel.syncId = syncId;
-          
-          delta = {
-            id: syncId,
-            modelName: transaction.modelType,
-            modelId: transaction.modelId,
-            action: DeltaAction.UPDATE,
-            data: existingModel.data,
-            previousData,
-            timestamp: Date.now()
-          };
-        } else {
-          // Model doesn't exist, treat UPDATE as CREATE for new models
-          console.log(`📝 UPDATE on non-existent model, treating as CREATE: ${transaction.modelType}:${transaction.modelId}`);
-          this.models.set(modelKey, {
-            id: transaction.modelId,
-            modelType: transaction.modelType,
-            data: transaction.data,
-            lastModified: Date.now(),
-            syncId
-          });
-          
-          delta = {
-            id: syncId,
-            modelName: transaction.modelType,
-            modelId: transaction.modelId,
-            action: DeltaAction.CREATE,
-            data: transaction.data,
-            timestamp: Date.now()
-          };
+          return { ...record, syncId, processed: true, originalSyncRecordId: record.id };
         }
         break;
 
-      case TransactionType.DELETE:
-        const modelToDelete = this.models.get(modelKey);
-        if (modelToDelete) {
-          const previousData = { ...modelToDelete.data };
+      case 'delete':
+        if (this.models.has(modelKey)) {
           this.models.delete(modelKey);
-          
-          delta = {
-            id: syncId,
-            modelName: transaction.modelType,
-            modelId: transaction.modelId,
-            action: DeltaAction.DELETE,
-            previousData,
-            timestamp: Date.now()
-          };
-        }
-        break;
-
-      case TransactionType.ARCHIVE:
-        const modelToArchive = this.models.get(modelKey);
-        if (modelToArchive) {
-          modelToArchive.data._isArchived = true;
-          modelToArchive.lastModified = Date.now();
-          modelToArchive.syncId = syncId;
-          
-          delta = {
-            id: syncId,
-            modelName: transaction.modelType,
-            modelId: transaction.modelId,
-            action: DeltaAction.ARCHIVE,
-            data: modelToArchive.data,
-            timestamp: Date.now()
-          };
+          return { ...record, syncId, processed: true, originalSyncRecordId: record.id };
         }
         break;
     }
 
-    return delta;
+    return null;
   }
 
-  private sendExistingModels(client: ClientConnection): void {
-    const deltaPackets: DeltaPacket[] = [];
-    
-    for (const model of this.models.values()) {
-      if (!model.data._isDeleted && !model.data._isArchived) {
-        deltaPackets.push({
-          id: model.syncId,
-          modelName: model.modelType,
-          modelId: model.id,
-          action: DeltaAction.CREATE,
-          data: model.data,
-          timestamp: model.lastModified
-        });
-      }
-    }
-
-    if (deltaPackets.length > 0) {
-      console.log(`📤 Sending ${deltaPackets.length} existing models to client ${client.id}`);
-      this.send(client, {
-        type: 'delta_batch',
-        batch: {
-          packets: deltaPackets,
-          startSyncId: Math.min(...deltaPackets.map(d => d.id)),
-          endSyncId: Math.max(...deltaPackets.map(d => d.id)),
-          timestamp: Date.now()
-        }
-      });
-    }
-  }
-
-  private broadcastDeltas(deltaPackets: DeltaPacket[], excludeClientId?: string): void {
-    console.log(`📡 Broadcasting ${deltaPackets.length} deltas to ${this.clients.size} clients`);
+  private broadcastSyncRecords(records: any[], excludeClientId?: string): void {
+    console.log(`📡 Broadcasting ${records.length} sync records to ${this.clients.size} clients`);
     
     const message = {
-      type: 'delta_batch',
-      batch: {
-        packets: deltaPackets,
-        startSyncId: Math.min(...deltaPackets.map(d => d.id)),
-        endSyncId: Math.max(...deltaPackets.map(d => d.id)),
-        timestamp: Date.now()
+      type: 'sync_delta',
+      delta: {
+        id: `broadcast-${Date.now()}`,
+        records,
+        timestamp: Date.now(),
+        clientId: 'server',
+        schemaHash: 'mock-schema-hash',
+        fromVersion: this.syncIdCounter - records.length,
+        toVersion: this.syncIdCounter
       }
     };
 
@@ -329,30 +199,59 @@ class MockSyncServer {
     });
   }
 
-  private sendSyncStatus(client: ClientConnection): void {
-    this.send(client, {
-      type: 'sync_status',
-      syncId: this.syncIdCounter,
-      timestamp: Date.now()
-    });
+  private handleVersionCheck(client: ClientConnection, message: any): void {
+    // HashSyncEngine doesn't expect a response to version_check - it's just informational
+    // The real sync happens through sync_state_request/response cycle
+    console.log(`📋 Version check from ${client.id}:`, message.localVersion || 'unknown');
   }
 
-  private sendTransactionAck(client: ClientConnection, transactionId: string, syncId: number): void {
-    this.send(client, {
-      type: 'transaction_ack',
-      transactionId,
-      syncId,
-      timestamp: Date.now()
-    });
-  }
+  private sendSyncState(client: ClientConnection, request?: any): void {
+    // Convert models to sync records and send as sync_state_response
+    const existingRecords: any[] = [];
+    
+    for (const model of this.models.values()) {
+      existingRecords.push({
+        id: `${model.modelType}:${model.id}:${model.lastModified}`,
+        modelName: model.modelType,
+        modelId: model.id,
+        operation: 'create',
+        data: model.data,
+        version: model.syncId,
+        timestamp: model.lastModified,
+        clientId: 'server',
+        hash: 'mock-hash'
+      });
+    }
 
-  private sendTransactionError(client: ClientConnection, transactionId: string, error: string): void {
+    // Use client's schema hash if provided, otherwise use default
+    const clientSchemaHash = request?.schemaHash || 'mock-schema-hash';
+    
+    // Send a sync_state_response with proper format - use client's schema hash
     this.send(client, {
-      type: 'transaction_error',
-      transactionId,
-      error,
-      timestamp: Date.now()
+      type: 'sync_state_response',
+      state: {
+        serverVersion: this.syncIdCounter,
+        schemaHash: clientSchemaHash,
+        lastDeltaId: null,
+        supportedSchemaVersions: [clientSchemaHash, 'mock-schema-hash']
+      }
     });
+    
+    // If there are existing records, send them as a sync_delta
+    if (existingRecords.length > 0) {
+      this.send(client, {
+        type: 'sync_delta',
+        delta: {
+          id: `server-initial-${Date.now()}`,
+          records: existingRecords,
+          timestamp: Date.now(),
+          clientId: 'server',
+          schemaHash: 'mock-schema-hash',
+          fromVersion: 0,
+          toVersion: this.syncIdCounter
+        }
+      });
+    }
   }
 
   private sendError(client: ClientConnection, error: string): void {

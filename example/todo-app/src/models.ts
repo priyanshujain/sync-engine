@@ -1,41 +1,31 @@
 import { v4 as uuidv4 } from 'uuid'
 import { observable, action, makeObservable } from 'mobx'
-import { Model, ModelOptions } from '../../../src/model'
+import { IndexedBaseModel } from '../../../src/models/indexed-base-model'
 import { ModelRegistry } from '../../../src/model-registry'
 
-export class Todo extends Model {
-  text: string = ''
-  completed: boolean = false  
-  createdAt: number = Date.now()
+export class Todo extends IndexedBaseModel {
+  @observable text: string = ''
+  @observable completed: boolean = false
 
-  constructor(id?: string, options?: ModelOptions & { text?: string }) {
-    super(id || uuidv4(), options)
+  constructor(id?: string, options?: { text?: string }) {
+    super(id || uuidv4(), {})
     
-    // Make properties observable for React updates
-    makeObservable(this, {
-      text: observable,
-      completed: observable,
-      createdAt: observable,
-      setText: action,
-      toggle: action,
-    })
-    
-    // Capture empty initial state first
-    this.markClean() // Capture empty state as previous state
-    
-    // Now set the text (this creates changes vs the empty previous state)
+    // Set initial values
     this.text = options?.text || ''
-    // Make it dirty for sync (this should now detect changes)
-    if (options?.text) {
+    
+    // Mark as dirty so it will be saved
+    if (this.text) {
       this.markDirty()
     }
   }
 
+  @action
   setText(text: string): void {
     this.text = text
     this.markDirty()
   }
 
+  @action
   toggle(): void {
     this.completed = !this.completed
     this.markDirty()
@@ -43,24 +33,12 @@ export class Todo extends Model {
 
   toJSON(): Record<string, any> {
     return {
-      id: this.id,
+      ...super.toJSON(),
       text: this.text,
       completed: this.completed,
-      createdAt: this.createdAt,
     }
-  }
-
-
-  static fromJSON<T extends Model>(
-    this: new (id: string) => T,
-    data: Record<string, any>
-  ): T {
-    const instance = new this(data.id)
-    Object.assign(instance, data)
-    instance.markClean()
-    return instance
   }
 }
 
 // Register the model with the sync engine
-ModelRegistry.registerModel('Todo', Todo)
+ModelRegistry.registerModel('Todo', Todo as any)
