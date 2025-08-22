@@ -2,6 +2,8 @@ import { IndexedDBStore } from '../storage/indexed-db-store';
 import { IndexedBaseModel } from '../models/indexed-base-model';
 import { ModelRegistry, ModelMetadata } from '../model-registry';
 import { SchemaHasher } from '../hash';
+import { SyncRecordValidator } from './sync-record-validator';
+import { ResourceManager, ManagedWebSocket } from '../utils/resource-manager';
 import { makeObservable, observable, action, computed } from 'mobx';
 
 /**
@@ -85,9 +87,11 @@ export class HashSyncEngine {
   private store: IndexedDBStore;
   private config: Required<HashSyncConfig>;
   private websocket?: WebSocket;
-  private syncTimer?: NodeJS.Timeout;
-  private heartbeatTimer?: NodeJS.Timeout;
-  private reconnectTimer?: NodeJS.Timeout;
+  private resourceManager: ResourceManager;
+  private syncTimer?: NodeJS.Timeout | number;
+  private heartbeatTimer?: NodeJS.Timeout | number;
+  private reconnectTimer?: NodeJS.Timeout | number;
+  private eventCleanup?: () => void;
   
   @observable status: HashSyncStatus = HashSyncStatus.DISCONNECTED;
   @observable lastError?: Error;
@@ -99,6 +103,7 @@ export class HashSyncEngine {
 
   constructor(store: IndexedDBStore, config: HashSyncConfig = {}) {
     this.store = store;
+    this.resourceManager = new ResourceManager();
     this.config = {
       serverUrl: config.serverUrl || 'ws://localhost:8080/sync',
       clientId: config.clientId || this.generateClientId(),
@@ -174,13 +179,23 @@ export class HashSyncEngine {
       hash: await this.hashData(record.data),
     };
 
+    // Validate before queuing
+    const validation = SyncRecordValidator.validate(syncRecord);
+    if (!validation.isValid) {
+      console.error('Attempting to queue invalid sync record:', validation.errors);
+      throw new Error(`Cannot queue invalid sync record: ${validation.errors[0]?.message}`);
+    }
+
+    // Sanitize before storing
+    const sanitizedRecord = SyncRecordValidator.sanitize(syncRecord);
+
     // Store the sync record directly, bypassing the normal model sync queue
     await this.store.put('_sync', {
-      id: syncRecord.id,
-      modelName: record.modelName,
-      modelId: record.modelId, 
-      operation: record.operation,
-      data: syncRecord, // Store the complete sync record
+      id: sanitizedRecord.id,
+      modelName: sanitizedRecord.modelName,
+      modelId: sanitizedRecord.modelId, 
+      operation: sanitizedRecord.operation,
+      data: sanitizedRecord, // Store the complete sync record
       status: 'pending',
       createdAt: Date.now(),
       syncId: null
@@ -250,14 +265,14 @@ export class HashSyncEngine {
 
   private async establishWebSocketConnection(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeoutHandle = this.resourceManager.setTimeout(() => {
         reject(new Error('WebSocket connection timeout'));
       }, 10000);
 
       this.websocket = new WebSocket(this.config.serverUrl);
 
       this.websocket.onopen = () => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.log('Hash sync WebSocket connected');
         resolve();
       };
@@ -272,13 +287,13 @@ export class HashSyncEngine {
       };
 
       this.websocket.onclose = () => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.log('Hash sync WebSocket disconnected');
         this.handleDisconnection();
       };
 
       this.websocket.onerror = (error) => {
-        clearTimeout(timeout);
+        this.resourceManager.clearTimer(timeoutHandle);
         console.error('Hash sync WebSocket error:', error);
         reject(new Error('WebSocket connection failed'));
       };
@@ -419,20 +434,30 @@ export class HashSyncEngine {
 
   private async applyRemoteRecord(record: SyncRecord): Promise<void> {
     try {
-      const ModelClass = ModelRegistry.getModel(record.modelName);
+      // Validate the record first for security
+      const validation = SyncRecordValidator.validate(record);
+      if (!validation.isValid) {
+        console.error('Invalid sync record received:', validation.errors);
+        throw new Error(`Invalid sync record: ${validation.errors[0]?.message}`);
+      }
+      
+      // Sanitize the record to remove any potentially dangerous content
+      const sanitizedRecord = SyncRecordValidator.sanitize(record);
+      
+      const ModelClass = ModelRegistry.getModel(sanitizedRecord.modelName);
       if (!ModelClass) {
-        console.warn(`Unknown model type: ${record.modelName}`);
+        console.warn(`Unknown model type: ${sanitizedRecord.modelName}`);
         return;
       }
 
-      switch (record.operation) {
+      switch (sanitizedRecord.operation) {
         case 'create':
         case 'update':
           // Check for conflicts
-          const existing = await (ModelClass as any).load(record.modelId);
-          if (existing && existing._version >= record.version) {
+          const existing = await (ModelClass as any).load(sanitizedRecord.modelId);
+          if (existing && existing._version >= sanitizedRecord.version) {
             // Local version is newer or equal, apply conflict resolution
-            const resolvedData = await this.resolveConflict(existing, record);
+            const resolvedData = await this.resolveConflict(existing, sanitizedRecord);
             if (resolvedData) {
               if (typeof existing.update === 'function') {
                 existing.update(resolvedData);
@@ -445,31 +470,31 @@ export class HashSyncEngine {
             // Remote version is newer, apply directly
             if (existing) {
               if (typeof existing.update === 'function') {
-                existing.update(record.data);
+                existing.update(sanitizedRecord.data);
               } else {
-                Object.assign(existing, record.data);
+                Object.assign(existing, sanitizedRecord.data);
               }
-              existing._version = record.version;
+              existing._version = sanitizedRecord.version;
               await existing.save();
             } else {
               // For create operations, we need to store directly in IndexedDB
               // since we can't instantiate abstract classes
-              await this.store.put(record.modelName, {
-                ...record.data,
-                id: record.modelId,
-                _version: record.version,
+              await this.store.put(sanitizedRecord.modelName, {
+                ...sanitizedRecord.data,
+                id: sanitizedRecord.modelId,
+                _version: sanitizedRecord.version,
               });
             }
           }
           break;
           
         case 'delete':
-          const modelToDelete = await (ModelClass as any).load(record.modelId);
+          const modelToDelete = await (ModelClass as any).load(sanitizedRecord.modelId);
           if (modelToDelete) {
             await modelToDelete.delete();
           } else {
             // If model instance doesn't exist, delete directly from store
-            await this.store.delete(record.modelName, record.modelId);
+            await this.store.delete(sanitizedRecord.modelName, sanitizedRecord.modelId);
           }
           break;
       }
@@ -515,7 +540,12 @@ export class HashSyncEngine {
   }
 
   private scheduleReconnect(): void {
-    this.reconnectTimer = setTimeout(() => {
+    if (this.reconnectTimer) {
+      return; // Already scheduled
+    }
+    
+    this.reconnectTimer = this.resourceManager.setTimeout(() => {
+      this.reconnectTimer = undefined;
       if (this.status === HashSyncStatus.DISCONNECTED && this.isOnline) {
         this.connect().catch(console.error);
       }
@@ -523,42 +553,40 @@ export class HashSyncEngine {
   }
 
   private startPeriodicSync(): void {
-    this.syncTimer = setInterval(() => {
+    if (this.syncTimer) {
+      return; // Already running
+    }
+    
+    this.syncTimer = this.resourceManager.setInterval(() => {
       if (this.status === HashSyncStatus.CONNECTED) {
         this.sync().catch(console.error);
       }
     }, this.config.syncIntervalMs);
-    
-    // Prevent timer from keeping process alive in tests
-    if (this.syncTimer && typeof this.syncTimer.unref === 'function') {
-      this.syncTimer.unref();
-    }
   }
 
   private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(() => {
+    if (this.heartbeatTimer) {
+      return; // Already running
+    }
+    
+    this.heartbeatTimer = this.resourceManager.setInterval(() => {
       this.sendMessage({ type: 'heartbeat', timestamp: Date.now() });
     }, this.config.heartbeatIntervalMs);
-    
-    // Prevent timer from keeping process alive in tests
-    if (this.heartbeatTimer && typeof this.heartbeatTimer.unref === 'function') {
-      this.heartbeatTimer.unref();
-    }
   }
 
   private clearTimers(): void {
     if (this.syncTimer) {
-      clearInterval(this.syncTimer);
+      this.resourceManager.clearTimer(this.syncTimer);
       this.syncTimer = undefined;
     }
     
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      this.resourceManager.clearTimer(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
     
     if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+      this.resourceManager.clearTimer(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
   }
@@ -576,8 +604,11 @@ export class HashSyncEngine {
       this.setStatus(HashSyncStatus.DISCONNECTED);
     };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    // Use resource manager for automatic cleanup
+    if (typeof window !== 'undefined') {
+      this.resourceManager.addEventListener(window, 'online', handleOnline);
+      this.resourceManager.addEventListener(window, 'offline', handleOffline);
+    }
   }
 
   private async loadSyncState(): Promise<void> {
@@ -630,5 +661,19 @@ export class HashSyncEngine {
 
   private generateDeltaId(): string {
     return `delta_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
+
+  /**
+   * Dispose of all resources held by the sync engine
+   */
+  async dispose(): Promise<void> {
+    // Disconnect from server
+    this.disconnect();
+    
+    // Clean up all managed resources
+    await this.resourceManager.dispose();
+    
+    // Clear references
+    this.websocket = undefined;
   }
 }
