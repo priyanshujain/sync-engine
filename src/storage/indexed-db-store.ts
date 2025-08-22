@@ -305,6 +305,45 @@ export class IndexedDBStore {
   }
 
   /**
+   * Get pending sync records with limit (for hash-based sync engine)
+   */
+  async getPendingSyncRecords(limit: number = 50): Promise<any[]> {
+    if (!this.db) throw new Error('Database not initialized');
+    
+    const transaction = this.db.transaction(['_sync'], 'readonly');
+    const store = transaction.objectStore('_sync');
+    const index = store.index('status');
+    
+    return new Promise((resolve, reject) => {
+      const request = index.getAll(IDBKeyRange.only('pending'), limit);
+      
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /**
+   * Remove sync record by ID
+   */
+  async removeSyncRecord(syncRecordId: string): Promise<void> {
+    await this.delete('_sync', syncRecordId);
+  }
+
+  /**
+   * Set metadata (alias for compatibility with hash sync engine)
+   */
+  async setMetadata(key: string, value: any): Promise<void> {
+    return this.setMeta(key, value);
+  }
+
+  /**
+   * Get metadata (alias for compatibility with hash sync engine)
+   */
+  async getMetadata(key: string): Promise<any> {
+    return this.getMeta(key);
+  }
+
+  /**
    * Generate schema hash for database versioning (Linear pattern)
    */
   private async generateSchemaHash(models: ModelMetadata[]): Promise<string> {

@@ -1,10 +1,9 @@
-import { LazyReferenceCollection } from './lazy-reference-collection';
-import { Model } from './model';
+import { IndexedBaseModel } from './models/indexed-base-model';
 
-type ModelClass = typeof Model;
+type ModelClass = typeof IndexedBaseModel;
 export type ModelProperty = {
   type: 'property' | 'reference' | 'back-reference';
-  collectionType?: typeof LazyReferenceCollection;
+  collectionType?: any;
   targetModel?: ModelClass;
   backRef?: string;
   lazy?: boolean;
@@ -22,7 +21,7 @@ export class ModelRegistry {
   private static modelLookup = new Map<string, ModelClass>();
   private static modelPropertyLookup = new Map<string, Map<string, ModelProperty>>();
   private static modelReferencePropertyLookup = new Map<string, Map<string, string>>();
-  private static modelInstances = new Map<string, Map<string, Model>>();
+  private static modelInstances = new Map<string, Map<string, IndexedBaseModel>>();
 
   static registerModel(name: string, constructor: ModelClass) {
     this.modelLookup.set(name, constructor);
@@ -58,12 +57,21 @@ export class ModelRegistry {
     };
   }
 
-  static getModelInstance(modelName: string, id: string): Model | undefined {
+  static getAllModels(): Map<string, ModelMetadata> {
+    const models = new Map<string, ModelMetadata>();
+    for (const modelClass of this.modelLookup.values()) {
+      const metadata = this.getModelMetadata(modelClass);
+      models.set(metadata.name, metadata);
+    }
+    return models;
+  }
+
+  static getModelInstance(modelName: string, id: string): IndexedBaseModel | undefined {
     const instances = this.modelInstances.get(modelName);
     return instances?.get(id);
   }
 
-  static registerInstance(model: Model) {
+  static registerInstance(model: IndexedBaseModel) {
     const modelName = model.constructor.name;
     if (!this.modelInstances.has(modelName)) {
       this.modelInstances.set(modelName, new Map());
@@ -71,7 +79,7 @@ export class ModelRegistry {
     this.modelInstances.get(modelName)?.set(model.id, model);
   }
 
-  static async queryModels<T extends Model>(modelName: string, criteria: Record<string, any>): Promise<T[]> {
+  static async queryModels<T extends IndexedBaseModel>(modelName: string, criteria: Record<string, any>): Promise<T[]> {
     const instances = this.modelInstances.get(modelName) || new Map();
     return Array.from(instances.values()).filter(model => {
       return Object.entries(criteria).every(([key, value]) => model[key] === value);

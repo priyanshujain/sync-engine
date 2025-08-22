@@ -1,35 +1,38 @@
 import React, { useState, useEffect } from 'react'
 import { observer } from 'mobx-react-lite'
-import { SyncClient, SyncStatus } from '../../../src/sync/sync-client'
+// TODO: Update TODO app to use new HashSyncEngine API
+// import { HashSyncEngine, HashSyncStatus } from '../../../src/sync/hash-sync-engine'
+// import { IndexedDBStore } from '../../../src/storage/indexed-db-store'
 import { Todo } from './models'
 
-// Initialize the sync client
-const syncClient = new SyncClient({
-  serverUrl: 'ws://localhost:8080', // Mock server URL
-})
+// TODO: Initialize the new hash-based sync client after updating API usage
+// const store = new IndexedDBStore()
+// const syncClient = new HashSyncEngine(store, {
+//   serverUrl: 'ws://localhost:8080', // Mock server URL
+// })
 
 const App = observer(() => {
   const [newTodoText, setNewTodoText] = useState('')
   const [todos, setTodos] = useState<Todo[]>([])
 
   useEffect(() => {
-    // Try to connect to sync server (will fail gracefully if no server)
-    syncClient.connect().catch(console.warn)
+    // TODO: Try to connect to sync server (will fail gracefully if no server)
+    // syncClient.connect().catch(console.warn)
     
-    // Update todos list when sync client state changes
-    const updateTodos = () => {
-      const allTodos = syncClient.getModelsByType<Todo>('Todo')
-      setTodos(allTodos.filter(todo => !todo._isDeleted))
-    }
+    // TODO: Update todos list when sync client state changes
+    // const updateTodos = () => {
+    //   const allTodos = syncClient.getModelsByType<Todo>('Todo')
+    //   setTodos(allTodos.filter(todo => !todo._isDeleted))
+    // }
     
-    updateTodos()
+    // updateTodos()
     
-    // Set up periodic updates (simple polling since we don't have proper event system)
-    const interval = setInterval(updateTodos, 500) // Faster updates for demo
+    // TODO: Set up periodic updates (simple polling since we don't have proper event system)
+    // const interval = setInterval(updateTodos, 500) // Faster updates for demo
     
     return () => {
-      clearInterval(interval)
-      syncClient.disconnect()
+      // clearInterval(interval)
+      // syncClient.disconnect()
     }
   }, [])
 

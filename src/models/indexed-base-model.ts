@@ -18,11 +18,14 @@ export abstract class IndexedBaseModel {
   @observable _isDirty = false;
   _previousState: Record<string, any> = {};
   @observable _isDeleted = false;
+  @observable createdAt = new Date();
+  @observable updatedAt = new Date();
   
   static loadStrategy: 'full' | 'partial' = 'full';
   
   // Static storage instance shared across all models
   protected static store?: IndexedDBStore;
+  protected static syncEngine?: any; // HashSyncEngine - avoiding circular imports
   
   protected options: ModelOptions;
 
@@ -45,6 +48,13 @@ export abstract class IndexedBaseModel {
    */
   static setStore(store: IndexedDBStore): void {
     IndexedBaseModel.store = store;
+  }
+
+  /**
+   * Set the sync engine for all models
+   */
+  static setSyncEngine(syncEngine: any): void {
+    IndexedBaseModel.syncEngine = syncEngine;
   }
 
   /**
@@ -120,6 +130,7 @@ export abstract class IndexedBaseModel {
   markDirty(): void {
     this._isDirty = true;
     this._version++;
+    this.updatedAt = new Date();
     
     if (this.options.autoSave) {
       this.save().catch(console.error);
@@ -175,6 +186,19 @@ export abstract class IndexedBaseModel {
       
       // Queue for sync
       await IndexedBaseModel.store.queueForSync(modelName, this.id, operation, data);
+      
+      // Update sync engine count if available (schedule async to avoid MobX cycles)
+      if (IndexedBaseModel.syncEngine && typeof IndexedBaseModel.syncEngine.updatePendingSyncCount === 'function') {
+        // Use setTimeout to break potential MobX reaction cycles
+        setTimeout(() => {
+          // Check if store is still initialized before updating
+          if (IndexedBaseModel.store && IndexedBaseModel.syncEngine) {
+            IndexedBaseModel.syncEngine.updatePendingSyncCount().catch(() => {
+              // Silently ignore errors during cleanup/teardown
+            });
+          }
+        }, 0);
+      }
       
       this.markClean();
     } catch (error) {
