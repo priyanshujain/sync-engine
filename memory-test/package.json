@@ -1,0 +1,15 @@
+{
+  "name": "sync-engine-memory-test",
+  "version": "1.0.0",
+  "description": "Long-running memory test for sync engine",
+  "main": "long-running-demo.ts",
+  "scripts": {
+    "test": "tsx long-running-demo.ts",
+    "test:short": "tsx long-running-demo.ts --duration 2",
+    "test:long": "tsx long-running-demo.ts --duration 10",
+    "monitor": "tsx memory-monitor.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.20.4"
+  }
+}
