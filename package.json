@@ -4,7 +4,10 @@
   "description": "A sync engine to make the app to work completely offline first",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:debug": "jest --detectOpenHandles --runInBand"
   },
   "repository": {
     "type": "git",
@@ -17,8 +20,14 @@
   ],
   "author": "Balancewise",
   "dependencies": {
-    "fake-indexeddb": "^6.0.0",
-    "mobx": "^6.13.6",
-    "tsx": "^4.19.2"
+    "fake-indexeddb": "^6.1.0",
+    "mobx": "^6.13.7",
+    "tsx": "^4.20.4"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.8.0",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.1"
   }
 }
