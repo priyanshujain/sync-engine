@@ -2,6 +2,7 @@ import { IndexedDBStore } from '../storage/indexed-db-store';
 import { IndexedBaseModel } from '../models/indexed-base-model';
 import { ModelRegistry, ModelMetadata } from '../model-registry';
 import { SchemaHasher } from '../hash';
+import { SyncRecordValidator } from './sync-record-validator';
 import { makeObservable, observable, action, computed } from 'mobx';
 
 /**
@@ -174,13 +175,23 @@ export class HashSyncEngine {
       hash: await this.hashData(record.data),
     };
 
+    // Validate before queuing
+    const validation = SyncRecordValidator.validate(syncRecord);
+    if (!validation.isValid) {
+      console.error('Attempting to queue invalid sync record:', validation.errors);
+      throw new Error(`Cannot queue invalid sync record: ${validation.errors[0]?.message}`);
+    }
+
+    // Sanitize before storing
+    const sanitizedRecord = SyncRecordValidator.sanitize(syncRecord);
+
     // Store the sync record directly, bypassing the normal model sync queue
     await this.store.put('_sync', {
-      id: syncRecord.id,
-      modelName: record.modelName,
-      modelId: record.modelId, 
-      operation: record.operation,
-      data: syncRecord, // Store the complete sync record
+      id: sanitizedRecord.id,
+      modelName: sanitizedRecord.modelName,
+      modelId: sanitizedRecord.modelId, 
+      operation: sanitizedRecord.operation,
+      data: sanitizedRecord, // Store the complete sync record
       status: 'pending',
       createdAt: Date.now(),
       syncId: null
@@ -419,20 +430,30 @@ export class HashSyncEngine {
 
   private async applyRemoteRecord(record: SyncRecord): Promise<void> {
     try {
-      const ModelClass = ModelRegistry.getModel(record.modelName);
+      // Validate the record first for security
+      const validation = SyncRecordValidator.validate(record);
+      if (!validation.isValid) {
+        console.error('Invalid sync record received:', validation.errors);
+        throw new Error(`Invalid sync record: ${validation.errors[0]?.message}`);
+      }
+      
+      // Sanitize the record to remove any potentially dangerous content
+      const sanitizedRecord = SyncRecordValidator.sanitize(record);
+      
+      const ModelClass = ModelRegistry.getModel(sanitizedRecord.modelName);
       if (!ModelClass) {
-        console.warn(`Unknown model type: ${record.modelName}`);
+        console.warn(`Unknown model type: ${sanitizedRecord.modelName}`);
         return;
       }
 
-      switch (record.operation) {
+      switch (sanitizedRecord.operation) {
         case 'create':
         case 'update':
           // Check for conflicts
-          const existing = await (ModelClass as any).load(record.modelId);
-          if (existing && existing._version >= record.version) {
+          const existing = await (ModelClass as any).load(sanitizedRecord.modelId);
+          if (existing && existing._version >= sanitizedRecord.version) {
             // Local version is newer or equal, apply conflict resolution
-            const resolvedData = await this.resolveConflict(existing, record);
+            const resolvedData = await this.resolveConflict(existing, sanitizedRecord);
             if (resolvedData) {
               if (typeof existing.update === 'function') {
                 existing.update(resolvedData);
@@ -445,31 +466,31 @@ export class HashSyncEngine {
             // Remote version is newer, apply directly
             if (existing) {
               if (typeof existing.update === 'function') {
-                existing.update(record.data);
+                existing.update(sanitizedRecord.data);
               } else {
-                Object.assign(existing, record.data);
+                Object.assign(existing, sanitizedRecord.data);
               }
-              existing._version = record.version;
+              existing._version = sanitizedRecord.version;
               await existing.save();
             } else {
               // For create operations, we need to store directly in IndexedDB
               // since we can't instantiate abstract classes
-              await this.store.put(record.modelName, {
-                ...record.data,
-                id: record.modelId,
-                _version: record.version,
+              await this.store.put(sanitizedRecord.modelName, {
+                ...sanitizedRecord.data,
+                id: sanitizedRecord.modelId,
+                _version: sanitizedRecord.version,
               });
             }
           }
           break;
           
         case 'delete':
-          const modelToDelete = await (ModelClass as any).load(record.modelId);
+          const modelToDelete = await (ModelClass as any).load(sanitizedRecord.modelId);
           if (modelToDelete) {
             await modelToDelete.delete();
           } else {
             // If model instance doesn't exist, delete directly from store
-            await this.store.delete(record.modelName, record.modelId);
+            await this.store.delete(sanitizedRecord.modelName, sanitizedRecord.modelId);
           }
           break;
       }

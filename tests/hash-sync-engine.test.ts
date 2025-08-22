@@ -260,7 +260,7 @@ describe('HashSyncEngine', () => {
         version: 2,
         timestamp: Date.now() + 1000, // Newer
         clientId: 'remote-client',
-        hash: 'remote-hash',
+        hash: 'abc123def456789', // Valid hex hash
       };
 
       // Apply remote record (this would normally be done through WebSocket)
@@ -288,7 +288,7 @@ describe('HashSyncEngine', () => {
         version: 2, // Lower version
         timestamp: Date.now() - 1000, // Older
         clientId: 'remote-client',
-        hash: 'remote-hash',
+        hash: 'fedcba987654321', // Valid hex hash
       };
 
       // Apply remote record
@@ -391,7 +391,7 @@ describe('HashSyncEngine', () => {
         version: 1,
         timestamp: Date.now(),
         clientId: 'test-client',
-        hash: 'test-hash',
+        hash: '1234567890abcdef', // Valid hex hash
       };
 
       // Verify record has all required fields
@@ -466,20 +466,28 @@ describe('HashSyncEngine Edge Cases', () => {
       version: 1,
       timestamp: Date.now(),
       clientId: 'test-client',
-      hash: 'test-hash',
+      hash: 'abcdef1234567890', // Valid hex hash
     };
 
-    // Suppress expected console.warn for this test
-    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    // Suppress expected console output for this test
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    // Should not throw error
-    await expect((syncEngine as any).applyRemoteRecord(invalidRecord)).resolves.toBeUndefined();
+    // Should handle the error gracefully without throwing (caught internally)
+    await (syncEngine as any).applyRemoteRecord(invalidRecord);
     
-    // Verify the warning was called
-    expect(consoleSpy).toHaveBeenCalledWith('Unknown model type: NonExistentModel');
+    // Verify the error was logged
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid sync record received:'),
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'modelName',
+          message: expect.stringContaining('Unknown model type')
+        })
+      ])
+    );
     
-    // Restore console.warn
-    consoleSpy.mockRestore();
+    // Restore console
+    consoleErrorSpy.mockRestore();
   });
 
   test('handles sync engine without WebSocket connection', () => {
