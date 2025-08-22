@@ -20,12 +20,12 @@
   ],
   "author": "Balancewise",
   "dependencies": {
-    "fake-indexeddb": "^6.0.0",
-    "mobx": "^6.13.6",
-    "tsx": "^4.19.2"
+    "fake-indexeddb": "^6.1.0",
+    "mobx": "^6.13.7",
+    "tsx": "^4.20.4"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.7.0",
+    "@testing-library/jest-dom": "^6.8.0",
     "@types/jest": "^30.0.0",
     "jest": "^30.0.5",
     "ts-jest": "^29.4.1"
