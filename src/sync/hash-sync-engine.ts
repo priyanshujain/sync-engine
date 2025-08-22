@@ -528,12 +528,22 @@ export class HashSyncEngine {
         this.sync().catch(console.error);
       }
     }, this.config.syncIntervalMs);
+    
+    // Prevent timer from keeping process alive in tests
+    if (this.syncTimer && typeof this.syncTimer.unref === 'function') {
+      this.syncTimer.unref();
+    }
   }
 
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       this.sendMessage({ type: 'heartbeat', timestamp: Date.now() });
     }, this.config.heartbeatIntervalMs);
+    
+    // Prevent timer from keeping process alive in tests
+    if (this.heartbeatTimer && typeof this.heartbeatTimer.unref === 'function') {
+      this.heartbeatTimer.unref();
+    }
   }
 
   private clearTimers(): void {

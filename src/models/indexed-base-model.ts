@@ -160,7 +160,20 @@ export abstract class IndexedBaseModel {
    */
   async save(): Promise<void> {
     if (!IndexedBaseModel.store) {
+      if (this.options.autoSave) {
+        // Silently fail for autoSave when store is not available
+        return;
+      }
       throw new Error('Store not initialized');
+    }
+
+    // Check if store is closed (db is null after close())
+    if (!(IndexedBaseModel.store as any).db) {
+      if (this.options.autoSave) {
+        // Silently fail for autoSave when store is closed
+        return;
+      }
+      throw new Error('Store is closed');
     }
 
     if (!this._isDirty) {
@@ -189,8 +202,8 @@ export abstract class IndexedBaseModel {
       
       // Update sync engine count if available (schedule async to avoid MobX cycles)
       if (IndexedBaseModel.syncEngine && typeof IndexedBaseModel.syncEngine.updatePendingSyncCount === 'function') {
-        // Use setTimeout to break potential MobX reaction cycles
-        setTimeout(() => {
+        // Use setTimeout to break potential MobX reaction cycles, with unref to prevent process hanging
+        const timer = setTimeout(() => {
           // Check if store is still initialized before updating
           if (IndexedBaseModel.store && IndexedBaseModel.syncEngine) {
             IndexedBaseModel.syncEngine.updatePendingSyncCount().catch(() => {
@@ -198,6 +211,10 @@ export abstract class IndexedBaseModel {
             });
           }
         }, 0);
+        // Prevent timer from keeping process alive
+        if (timer && typeof timer.unref === 'function') {
+          timer.unref();
+        }
       }
       
       this.markClean();
@@ -211,8 +228,8 @@ export abstract class IndexedBaseModel {
    * Delete model from IndexedDB and queue for sync
    */
   async delete(): Promise<void> {
-    if (!IndexedBaseModel.store) {
-      throw new Error('Store not initialized');
+    if (!IndexedBaseModel.store || !(IndexedBaseModel.store as any).db) {
+      throw new Error('Store not initialized or closed');
     }
 
     const modelName = this.getModelName();

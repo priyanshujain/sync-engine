@@ -14,4 +14,15 @@ module.exports = {
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  // Fix Jest deprecation warnings and memory issues
+  workerIdleMemoryLimit: '512MB',
+  clearMocks: true,
+  restoreMocks: true,
+  // Use 'on' to prevent accessing soft-deleted properties
+  resetMocks: true,
+  resetModules: true,
+  // Use single worker to avoid cross-test contamination
+  maxWorkers: 1,
+  // Increase timeout for cleanup
+  testTimeout: 10000,
 };

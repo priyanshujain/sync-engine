@@ -12,7 +12,7 @@ class TestModel extends IndexedBaseModel {
   @observable category: string = '';
   
   constructor(id: string) {
-    super(id);
+    super(id, { autoSave: false }); // Disable autoSave for tests
     this.name = '';
     this.value = 0;
     this.category = '';
@@ -46,7 +46,11 @@ class TestModel extends IndexedBaseModel {
     let isInitializing = true;
     
     // Allow initial setup without marking dirty
-    setTimeout(() => { isInitializing = false; }, 0);
+    const initTimer = setTimeout(() => { isInitializing = false; }, 0);
+    // Prevent timer from keeping process alive in tests
+    if (initTimer && typeof initTimer.unref === 'function') {
+      initTimer.unref();
+    }
     
     // Override setter behavior for testing
     Object.defineProperty(this, 'name', {
@@ -127,7 +131,14 @@ describe('IndexedBaseModel', () => {
     ModelRegistry.registerProperty('TestModel', 'category', { type: 'property', indexed: true });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Clear the static store reference first to prevent new operations
+    IndexedBaseModel.setStore(undefined as any);
+    
+    // Wait a bit for any pending operations to complete
+    await new Promise(resolve => setTimeout(resolve, 10));
+    
+    // Then close the store
     store.close();
   });
 
@@ -226,7 +237,7 @@ describe('IndexedBaseModel', () => {
       expect(syncQueue[0].operation).toBe('create');
     });
 
-    test.skip('updates existing model in IndexedDB', async () => {
+    test('updates existing model in IndexedDB', async () => {
       const model = new TestModel('update-test');
       model.setName('Initial');
       await model.save();

@@ -469,8 +469,17 @@ describe('HashSyncEngine Edge Cases', () => {
       hash: 'test-hash',
     };
 
+    // Suppress expected console.warn for this test
+    const consoleSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
     // Should not throw error
     await expect((syncEngine as any).applyRemoteRecord(invalidRecord)).resolves.toBeUndefined();
+    
+    // Verify the warning was called
+    expect(consoleSpy).toHaveBeenCalledWith('Unknown model type: NonExistentModel');
+    
+    // Restore console.warn
+    consoleSpy.mockRestore();
   });
 
   test('handles sync engine without WebSocket connection', () => {
